@@ -5,6 +5,7 @@
 #include "pcap.h"
 #pragma comment(lib,"ws2_32.lib")
 #include <IPHlpApi.h>
+#include <IPTypes.h>
 #pragma comment(lib, "iphlpapi.lib")
 #include <winsock.h>
 #include <winsock2.h>
@@ -26,14 +27,14 @@
 int TYPE_IPv4(const u_char* packet) {
 	/******************************
 	if type is IPv4: return 1
-	else:			 return 0
+	else:          return 0
 	*******************************/
 	return ((packet[ETH_type] == 0x08) && (packet[ETH_type + 1] == 0x00));
 }
 int PROT_TCP(const u_char* packet) {
 	/******************************
 	if protocol is TCP: return 1
-	else:				return 0
+	else:            return 0
 	*******************************/
 	return (packet[ETH_len + IP_prot] == 0x06);
 }
@@ -69,8 +70,8 @@ typedef struct ether_hdr
 typedef struct _Pseudohdr {
 	UINT32   saddr;
 	UINT32   daddr;
-	UINT8		useless;
-	UINT8		protocol;
+	UINT8      useless;
+	UINT8      protocol;
 	UINT16   tcplength;
 }Pseudohdr;
 
@@ -106,7 +107,7 @@ UINT16 GetCheckSum(UINT16 *buffer, int size)
 	return (unsigned short)(~cksum);
 }
 
-int my_MAC(unsigned char* mac) {
+int my_MAC(char* adname, unsigned char* mac) {
 	PIP_ADAPTER_INFO info, pinfo = NULL;
 	DWORD size = sizeof(info);
 	int success = 0;
@@ -124,6 +125,9 @@ int my_MAC(unsigned char* mac) {
 	}
 	if (GetAdaptersInfo(info, &size) == NO_ERROR) {
 		pinfo = info;
+		while (!strstr(pinfo->AdapterName, adname) && pinfo!=NULL) {
+			pinfo = pinfo->Next;
+		}
 		if (pinfo) {
 			success = 1;
 		}
@@ -133,10 +137,10 @@ int my_MAC(unsigned char* mac) {
 	}
 
 	free(info);
-	return success;	// success 1 , fail 0
+	return success;   // success 1 , fail 0
 }
 
-int my_IP(unsigned char* ipadd) {
+int my_IP(char* adname, unsigned char* ipadd) {
 	PIP_ADAPTER_INFO info, pinfo = NULL;
 	DWORD size = sizeof(info);
 	int success = 0;
@@ -155,6 +159,9 @@ int my_IP(unsigned char* ipadd) {
 	}
 	if (GetAdaptersInfo(info, &size) == NO_ERROR) {
 		pinfo = info;
+		while (!strstr(pinfo->AdapterName, adname) && pinfo != NULL) {
+			pinfo = pinfo->Next;
+		}
 		if (pinfo) {
 			success = 1;
 		}
@@ -162,7 +169,7 @@ int my_IP(unsigned char* ipadd) {
 	if (success) {
 		chk = 0;
 		cnt = 0;
-		for (int i = 0; i<strlen(pinfo->IpAddressList.IpAddress.String); i++) {
+		for (int i = 0; i < strlen(pinfo->IpAddressList.IpAddress.String); i++) {
 			if (pinfo->IpAddressList.IpAddress.String[i] == '.') {
 				ipadd[cnt] = chk;
 				chk = 0;
@@ -171,15 +178,16 @@ int my_IP(unsigned char* ipadd) {
 			else {
 				chk = chk * 10 + pinfo->IpAddressList.IpAddress.String[i] - 0x30;
 			}
+
 		}
 		ipadd[cnt] = chk;
 	}
 
 	free(info);
-	return success;	// success 1 , fail 0
+	return success;   // success 1 , fail 0
 }
 
-int gateway_IP(unsigned char* gip) {
+int gateway_IP(char* adname, unsigned char* gip) {
 	PIP_ADAPTER_INFO info, pinfo = NULL;
 	DWORD size = sizeof(info);
 	int success = 0;
@@ -198,6 +206,9 @@ int gateway_IP(unsigned char* gip) {
 	}
 	if (GetAdaptersInfo(info, &size) == NO_ERROR) {
 		pinfo = info;
+		while (!strstr(pinfo->AdapterName, adname) && pinfo != NULL) {
+			pinfo = pinfo->Next;
+		}
 		if (pinfo) {
 			success = 1;
 		}
@@ -219,16 +230,16 @@ int gateway_IP(unsigned char* gip) {
 	}
 
 	free(info);
-	return success;	// success 1 , fail 0
+	return success;   // success 1 , fail 0
 }
 
-int get_MAC(pcap_t* adhandle, u_char* gip, u_char* gmac) {
+int get_MAC(char* adname, pcap_t* adhandle, u_char* gip, u_char* gmac) {
 	int res, i;
 	struct pcap_pkthdr *header;
 	const u_char* pkt_data;
 	u_char req_data[42];
 
-	make_request(req_data, gip);
+	make_request(adname, req_data, gip);
 
 	if (pcap_sendpacket(adhandle, req_data, 42) != 0) {
 		printf("Error : Sending request packet!\n");
@@ -264,12 +275,12 @@ int get_MAC(pcap_t* adhandle, u_char* gip, u_char* gmac) {
 }
 
 // copied from my arp_poison
-int make_request(u_char* pdata, u_char* tip) {
+int make_request(char* adname, u_char* pdata, u_char* tip) {
 	int i;
 	// broadcast
 	for (i = 0; i<6; i++)
 		pdata[i] = 0xFF;
-	if (my_MAC(&pdata[6]) == 0) {
+	if (my_MAC(adname, &pdata[6]) == 0) {
 		printf("Error : Writing my MAC! \n");
 		return 0;
 	}
@@ -284,11 +295,11 @@ int make_request(u_char* pdata, u_char* tip) {
 	pdata[20] = 0x00;
 	pdata[21] = 0x01; // request
 
-	if (my_MAC(&pdata[22]) == 0) {
+	if (my_MAC(adname, &pdata[22]) == 0) {
 		printf("Error : Writing my MAC! \n");
 		return 0;
 	}
-	if (my_IP(&pdata[28]) == 0) {
+	if (my_IP(adname, &pdata[28]) == 0) {
 		printf("Error : Writing my IP! \n");
 		return 0;
 	}
@@ -300,8 +311,6 @@ int make_request(u_char* pdata, u_char* tip) {
 	return 1;
 
 }
-
-
 
 int calc_checksum_IP(u_char* packet) {
 	unsigned short *c_packet = (unsigned short*)packet;
@@ -334,7 +343,7 @@ int calc_checksum_TCP(u_char* packet, unsigned int len) {
 	packet[TCP_chksum] = 0x00;
 	packet[TCP_chksum + 1] = 0x00;
 
-	for (i = 0; i < (len - ETH_len - IP_len)/2; i++) {
+	for (i = 0; i < (len - ETH_len - IP_len) / 2; i++) {
 		checksum += c_packet[(ETH_len + IP_len) / 2 + i];
 	}
 	for (i = 0; i < 4; i++) {
@@ -352,13 +361,12 @@ int calc_checksum_TCP(u_char* packet, unsigned int len) {
 	return 1;
 }
 
-
-int bg_request(u_char* pdata, u_char* tip, u_char* gatewayMAC, int port){
+int bg_request(char* adname, u_char* pdata, u_char* tip, u_char* gatewayMAC, int port) {
 	int i;
 
 	// ethernet header
 	memcpy(pdata, gatewayMAC, 6);
-	my_MAC(&pdata[6]);
+	my_MAC(adname, &pdata[6]);
 	pdata[12] = 0x08;
 	pdata[13] = 0x00;
 
@@ -374,7 +382,7 @@ int bg_request(u_char* pdata, u_char* tip, u_char* gatewayMAC, int port){
 	pdata[22] = 0x80;
 	pdata[23] = 0x06;
 	// 24, 25 chksum
-	my_IP(&pdata[26]);
+	my_IP(adname, &pdata[26]);
 	for (i = 0; i < 4; i++) {
 		pdata[30 + i] = tip[i];
 	}
@@ -390,7 +398,7 @@ int bg_request(u_char* pdata, u_char* tip, u_char* gatewayMAC, int port){
 	pdata[47] = 0x02;
 	*(unsigned short*)(&pdata[48]) = htons(0x2000);
 	*(unsigned short*)(&pdata[50]) = 0x00; // checksum
-	*(unsigned short*)(&pdata[52]) = 0x00; 
+	*(unsigned short*)(&pdata[52]) = 0x00;
 	pdata[54] = 0x02;
 	pdata[55] = 0x04;
 	*(unsigned short*)(&pdata[56]) = htons(0x05b4);
@@ -402,7 +410,7 @@ int bg_request(u_char* pdata, u_char* tip, u_char* gatewayMAC, int port){
 	pdata[63] = 0x01;
 	pdata[64] = 0x04;
 	pdata[65] = 0x02;
-	calc_checksum_TCP(pdata,66);
+	calc_checksum_TCP(pdata, 66);
 	return 1;
 }
 
@@ -421,17 +429,17 @@ int bg_handshake(u_char* pdata, u_char* req_data, const u_char* recv_data, int p
 	return 1;
 }
 
-int telnet_bg(pcap_t* adhandle, u_char* srcIP, u_char* srcMac, u_char* dstIP, u_char* dstMac, int port) {
+int telnet_bg(char* adname, pcap_t* adhandle, u_char* srcIP, u_char* srcMac, u_char* dstIP, u_char* dstMac, int port) {
 	struct pcap_pkthdr *header;
 	const u_char* pkt_data;
-	
+
 	int res, i;
 	u_char req_data[100];
 	u_char send_data[100];
 
 	u_char* req_http = "GET * HTTP/1.1\x0d\x0a\x0d\x0a";
 
-	bg_request(req_data, dstIP, dstMac, port);
+	bg_request(adname, req_data, dstIP, dstMac, port);
 	pcap_sendpacket(adhandle, req_data, 66);
 	while ((res = pcap_next_ex(adhandle, &header, &pkt_data)) >= 0) {
 		if (res == 0)
@@ -459,7 +467,7 @@ int telnet_bg(pcap_t* adhandle, u_char* srcIP, u_char* srcMac, u_char* dstIP, u_
 	}
 
 	pcap_sendpacket(adhandle, send_data, 54);
-	
+
 	send_data[0x11] = 0x3a;
 	*(unsigned short*)(&send_data[0x12]) = htons(ntohs(*(unsigned short*)(&send_data[0x12])) + 1);
 	calc_checksum_IP(send_data);
@@ -470,7 +478,7 @@ int telnet_bg(pcap_t* adhandle, u_char* srcIP, u_char* srcMac, u_char* dstIP, u_
 
 	pcap_sendpacket(adhandle, send_data, 72);
 
-	
+
 	while ((res = pcap_next_ex(adhandle, &header, &pkt_data)) >= 0) {
 		if (res == 0)
 			/* Timeout elapsed */
@@ -484,7 +492,7 @@ int telnet_bg(pcap_t* adhandle, u_char* srcIP, u_char* srcMac, u_char* dstIP, u_
 		if (((unsigned int*)(&pkt_data[26]))[0] == ((unsigned int*)(dstIP))[0]) {
 			if (((unsigned int*)(&pkt_data[30]))[0] == ((unsigned int*)(srcIP))[0]) {
 				if ((*(unsigned short*)(&pkt_data[0x22]) == htons(port)) && (*(unsigned short*)(&pkt_data[0x24]) == *(unsigned short*)(&send_data[0x22]))) {
-					if(strstr(&pkt_data[54], "HTTP")){
+					if (strstr(&pkt_data[54], "HTTP")) {
 						for (i = 0x36; i < header->caplen; i++) {
 							printf("%c", pkt_data[i]);
 						}
@@ -534,10 +542,11 @@ int main(void) {
 	UINT16 port = 80;
 	u_char dstMac[6] = { 0, };
 	u_char srcMac[6] = { 0, };
-	u_char dstIP[4] = {24, 143, 251, 118};//{ 115, 68, 74, 145 };//
+	u_char dstIP[4] = { 24, 143, 251, 118 };//{ 115, 68, 74, 145 };//
 	u_char srcIP[4] = { 0, };
 	u_char send_data[66];
 
+	char* adapterName;
 
 	/* Retrieve the device list on the local machine */
 	if (pcap_findalldevs_ex(PCAP_SRC_IF_STRING, NULL, &alldevs, errbuf) == -1)
@@ -545,8 +554,10 @@ int main(void) {
 		fprintf(stderr, "Error in pcap_findalldevs: %s\n", errbuf);
 		exit(1);
 	}
-	inum = 1;	// first device select
-
+	inum = 1;   // first device select
+	for (d = alldevs; d->next != NULL; d = d->next) {
+		printf("%s\n", d->name);
+	}
 				/* Jump to the selected adapter */
 	for (d = alldevs, i = 0; i< inum - 1; d = d->next, i++);
 
@@ -565,12 +576,34 @@ int main(void) {
 		pcap_freealldevs(alldevs);
 		return -1;
 	}
+	adapterName = strstr(d->name, "{");
+	gateway_IP(adapterName, gatewayIP);
+	for (i = 0; i < 4; i++) {
+		printf("%d ", gatewayIP[i]);
+	}
+	printf("\n");
+	my_IP(adapterName, srcIP);
+	for (i = 0; i < 4; i++) {
+		printf("%d ", srcIP[i]);
+	}
+	printf("\n");
+	my_MAC(adapterName, srcMac);
+	for (i = 0; i < 6; i++) {
+		printf("%02x ", srcMac[i]);
+	}
+	printf("\n");
+	get_MAC(adapterName, adhandle, gatewayIP, dstMac);
 
-	gateway_IP(gatewayIP);
-	my_IP(srcIP);
-	my_MAC(srcMac);
-	get_MAC(adhandle, gatewayIP, dstMac);
 	
+	for (i = 0; i < 6; i++) {
+		printf("%02x ", dstMac[i]);
+	}
+	printf("\n");
+	for (i = 0; i < 4; i++) {
+		printf("%d ", dstIP[i]);
+	}
+	printf("\n");
+
 
 	ethHdr = (Ether_HDR*)packet;
 	ZeroMemory(ethHdr, sizeof(Ether_HDR));
@@ -595,7 +628,7 @@ int main(void) {
 	srand(time(0));
 	tcpHdr->SrcPort = rand() % 65536;//htons(10000);
 	tcpHdr->DstPort = htons(port);
-	tcpHdr->SeqNum = rand()%200000;//htonl(100);
+	tcpHdr->SeqNum = rand() % 200000;//htonl(100);
 	tcpHdr->AckNum = 0;
 	tcpHdr->doff = 0x05;
 	tcpHdr->syn = 0x01;
@@ -621,42 +654,42 @@ int main(void) {
 	ipHdr->ip_checksum = GetCheckSum((UINT16*)ipHdr, sizeof(IP_HDR));
 
 	int sendLen = sizeof(Ether_HDR) + sizeof(IP_HDR) + sizeof(TCP_HDR);
-/*
+	/*
 	if (pcap_sendpacket(adhandle, (u_char*)packet, sendLen) != 0)
 	{
-		fprintf(stderr, "\n1Error sending the packet: %s\n", pcap_geterr(adhandle));
+	fprintf(stderr, "\n1Error sending the packet: %s\n", pcap_geterr(adhandle));
 	}
-	
-	
-	while ((res = pcap_next_ex(adhandle, &header, &pkt_data)) >= 0) {
-		if (res == 0)
-			// Timeout elapsed
-			continue;
 
-		// type check
-		if (!TYPE_IPv4(pkt_data))
-			continue;
-		if (!PROT_TCP(pkt_data))
-			continue;
-		if (((unsigned int*)(&pkt_data[26]))[0] == ((unsigned int*)(dstIP))[0]) {
-			if (((unsigned int*)(&pkt_data[30]))[0] == ((unsigned int*)(srcIP))[0]) {
-				printf("TTL: %d\n", (unsigned short*)(&pkt_data[ETH_len + 8])[0]);
-				printf("Seq: %d\n", (unsigned int*)(&pkt_data[ETH_len + IP_len + 4])[0]);
-				printf("window: %d\n", (unsigned short*)(&pkt_data[ETH_len + IP_len + 14])[0]);
-				break;
-			}
-		}
-		continue;
+
+	while ((res = pcap_next_ex(adhandle, &header, &pkt_data)) >= 0) {
+	if (res == 0)
+	// Timeout elapsed
+	continue;
+
+	// type check
+	if (!TYPE_IPv4(pkt_data))
+	continue;
+	if (!PROT_TCP(pkt_data))
+	continue;
+	if (((unsigned int*)(&pkt_data[26]))[0] == ((unsigned int*)(dstIP))[0]) {
+	if (((unsigned int*)(&pkt_data[30]))[0] == ((unsigned int*)(srcIP))[0]) {
+	printf("TTL: %d\n", (unsigned short*)(&pkt_data[ETH_len + 8])[0]);
+	printf("Seq: %d\n", (unsigned int*)(&pkt_data[ETH_len + IP_len + 4])[0]);
+	printf("window: %d\n", (unsigned short*)(&pkt_data[ETH_len + IP_len + 14])[0]);
+	break;
+	}
+	}
+	continue;
 	}
 	if (res == -1) {
-		printf("Error reading the packets: %s\n", pcap_geterr(adhandle));
-		return -1;
+	printf("Error reading the packets: %s\n", pcap_geterr(adhandle));
+	return -1;
 	}
-*/
+	*/
 	printf("\n\n");
 
-	telnet_bg(adhandle, srcIP, srcMac, dstIP, dstMac, 8888);
-	
+	telnet_bg(adapterName, adhandle, srcIP, srcMac, dstIP, dstMac, 8888);
+
 	pcap_close(adhandle);
 
 	/*

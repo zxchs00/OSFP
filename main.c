@@ -548,6 +548,19 @@ int main(void) {
 
 	char* adapterName;
 
+	u_char ip_list[1190][4];
+	FILE* fp;
+	int j, k, l, m, n;
+	
+	fopen_s(&fp, "output.txt", "r");
+	for (j = 0; j < 1190; j++) {
+		for (i = 0; i < 4; i++) {
+			fscanf_s(fp, "%d", &ip_list[j][i]);
+		}
+	}
+	fclose(fp);
+	
+
 	/* Retrieve the device list on the local machine */
 	if (pcap_findalldevs_ex(PCAP_SRC_IF_STRING, NULL, &alldevs, errbuf) == -1)
 	{
@@ -577,127 +590,35 @@ int main(void) {
 		return -1;
 	}
 	adapterName = strstr(d->name, "{");
+
 	gateway_IP(adapterName, gatewayIP);
-	for (i = 0; i < 4; i++) {
-		printf("%d ", gatewayIP[i]);
-	}
-	printf("\n");
 	my_IP(adapterName, srcIP);
-	for (i = 0; i < 4; i++) {
-		printf("%d ", srcIP[i]);
-	}
-	printf("\n");
 	my_MAC(adapterName, srcMac);
-	for (i = 0; i < 6; i++) {
-		printf("%02x ", srcMac[i]);
-	}
-	printf("\n");
 	get_MAC(adapterName, adhandle, gatewayIP, dstMac);
 
-	
-	for (i = 0; i < 6; i++) {
-		printf("%02x ", dstMac[i]);
+	for (i = 0; i < 256; i++) {
+		for (j = 0; j < 1190; j++) { // ip list
+			dstIP[0] = ip_list[j][0];
+			dstIP[1] = ip_list[j][1];
+			dstIP[2] = ip_list[j][2];
+			dstIP[3] = i;
+			telnet_bg(adapterName, adhandle, srcIP, srcMac, dstIP, dstMac, 22);
+			for (k = 0; k < ip_list[3]-1; k++) {
+				dstIP[2] += 1;
+				if (dstIP[2] > 255) {
+					dstIP[2] = 0;
+					dstIP[1] += 1;
+				}
+				if (dstIP[1] > 255) {
+					dstIP[1] = 0;
+					dstIP[0] += 1;
+				}
+				telnet_bg(adapterName, adhandle, srcIP, srcMac, dstIP, dstMac, 22);
+			}
+		}
 	}
-	printf("\n");
-	for (i = 0; i < 4; i++) {
-		printf("%d ", dstIP[i]);
-	}
-	printf("\n");
-
-
-	ethHdr = (Ether_HDR*)packet;
-	ZeroMemory(ethHdr, sizeof(Ether_HDR));
-
-	ipHdr = (IP_HDR*)(packet + sizeof(Ether_HDR));
-	ZeroMemory(ipHdr, sizeof(IP_HDR));
-
-	tcpHdr = (TCP_HDR*)(packet + sizeof(Ether_HDR) + sizeof(IP_HDR));
-	ZeroMemory(tcpHdr, sizeof(TCP_HDR));
-
-	pseudoHdr = (Pseudohdr *)((char*)tcpHdr - sizeof(Pseudohdr));
-
-	memcpy(ethHdr->ether_dhost, dstMac, 6);
-	memcpy(ethHdr->ether_shost, srcMac, 6);
-	ethHdr->ether_type = htons(0x0800);
-
-	pseudoHdr->saddr = *(UINT32*)srcIP;
-	pseudoHdr->daddr = *(UINT32*)dstIP;
-	pseudoHdr->protocol = IPPROTO_TCP;
-	pseudoHdr->tcplength = htons(sizeof(TCP_HDR));
-
-	srand(time(0));
-	tcpHdr->SrcPort = rand() % 65536;//htons(10000);
-	tcpHdr->DstPort = htons(port);
-	tcpHdr->SeqNum = rand() % 200000;//htonl(100);
-	tcpHdr->AckNum = 0;
-	tcpHdr->doff = 0x05;
-	tcpHdr->syn = 0x01;
-	//tcpHdr->fin = 0x01;
-	/*tcpHdr->rst = 0x01;
-	tcpHdr->psh = 0x01;
-	tcpHdr->ack = 0x01;
-	tcpHdr->urg = 0x01;
-	tcpHdr->res2 = 0x03;*/
-	tcpHdr->Window = htons(512);
-	tcpHdr->ChkSum = GetCheckSum((UINT16*)pseudoHdr, sizeof(Pseudohdr) + sizeof(TCP_HDR));
-
-	ipHdr->ip_version = 4;
-	ipHdr->ihl = 5;
-	ipHdr->ip_protocol = IPPROTO_TCP;
-	ipHdr->ip_totallength = htons(sizeof(IP_HDR) + sizeof(TCP_HDR));
-	ipHdr->ip_id = htons(rand() % 0xffff);
-	ipHdr->ip_offset = 0;
-	ipHdr->ip_ttl = 255;
-	ipHdr->ip_srcaddr = *(UINT32*)srcIP;
-	ipHdr->ip_destaddr = *(UINT32*)dstIP;
-	ipHdr->ip_checksum = 0;
-	ipHdr->ip_checksum = GetCheckSum((UINT16*)ipHdr, sizeof(IP_HDR));
-
-	int sendLen = sizeof(Ether_HDR) + sizeof(IP_HDR) + sizeof(TCP_HDR);
-	/*
-	if (pcap_sendpacket(adhandle, (u_char*)packet, sendLen) != 0)
-	{
-	fprintf(stderr, "\n1Error sending the packet: %s\n", pcap_geterr(adhandle));
-	}
-
-
-	while ((res = pcap_next_ex(adhandle, &header, &pkt_data)) >= 0) {
-	if (res == 0)
-	// Timeout elapsed
-	continue;
-
-	// type check
-	if (!TYPE_IPv4(pkt_data))
-	continue;
-	if (!PROT_TCP(pkt_data))
-	continue;
-	if (((unsigned int*)(&pkt_data[26]))[0] == ((unsigned int*)(dstIP))[0]) {
-	if (((unsigned int*)(&pkt_data[30]))[0] == ((unsigned int*)(srcIP))[0]) {
-	printf("TTL: %d\n", (unsigned short*)(&pkt_data[ETH_len + 8])[0]);
-	printf("Seq: %d\n", (unsigned int*)(&pkt_data[ETH_len + IP_len + 4])[0]);
-	printf("window: %d\n", (unsigned short*)(&pkt_data[ETH_len + IP_len + 14])[0]);
-	break;
-	}
-	}
-	continue;
-	}
-	if (res == -1) {
-	printf("Error reading the packets: %s\n", pcap_geterr(adhandle));
-	return -1;
-	}
-	*/
-	printf("\n\n");
-
-	telnet_bg(adapterName, adhandle, srcIP, srcMac, dstIP, dstMac, 8888);
 
 	pcap_close(adhandle);
-
-	/*
-	printf("My IP  : %d.%d.%d.%d\n", myIP[0], myIP[1], myIP[2], myIP[3]);
-	printf("My MAC : %02x-%02x-%02x-%02x-%02x-%02x\n", myMAC[0], myMAC[1], myMAC[2], myMAC[3], myMAC[4], myMAC[5]);
-	printf("Gateway IP  : %d.%d.%d.%d\n", gatewayIP[0], gatewayIP[1], gatewayIP[2], gatewayIP[3]);
-	printf("Gateway MAC : %02x-%02x-%02x-%02x-%02x-%02x\n", gatewayMAC[0], gatewayMAC[1], gatewayMAC[2], gatewayMAC[3], gatewayMAC[4], gatewayMAC[5]);
-	*/
 
 	return 0;
 }
